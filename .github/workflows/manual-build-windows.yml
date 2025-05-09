@@ -18,56 +18,71 @@ jobs:
     name: Sestavit pro Windows
     runs-on: ubuntu-latest
 
-    outputs:
-      executable_name: mailsend-go-windows-amd64.exe
+    outputs: # Definuje výstupní proměnné z tohoto jobu
+      executable_name: mailsend-go-windows-amd64.exe # Název souboru, který předáme dál
 
     steps:
+      # Krok 1: Stáhnout kód tvého repozitáře
       - name: Stažení kódu (Checkout)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Potřebné pro získání informací o commitech pro git log
 
+      # Krok 2: Nastavit prostředí Go
       - name: Nastavení Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v5 # Používá standardní GitHub Action pro nastavení Go
         with:
-          go-version: '1.22'
+          go-version: '1.22' # Specifikuj verzi Go. mailsend-go vyžaduje 1.18+, doporučuje se novější.
 
+      # Krok 3: Kompilace aplikace pro Windows
       - name: Kompilace pro Windows (amd64)
-        id: build
+        id: build # Dáme tomuto kroku ID, abychom mohli odkazovat na jeho výstupy
         run: |
           EXECUTABLE_NAME="mailsend-go-windows-amd64.exe"
           echo "Kompiluji pro Windows amd64..."
+          # Nastavení proměnných prostředí pro cross-kompilaci
+          # GOOS=windows cílí na operační systém Windows
+          # GOARCH=amd64 cílí na 64-bitovou architekturu
           GOOS=windows GOARCH=amd64 go build -v -o $EXECUTABLE_NAME .
           echo "Kompilace dokončena. Výstupní soubor: $EXECUTABLE_NAME"
+          # Uloží název souboru pro další joby/kroky prostřednictvím GITHUB_OUTPUT
           echo "executable_name=$EXECUTABLE_NAME" >> $GITHUB_OUTPUT
 
+      # Krok 4: Nahrání skompilovaného souboru jako artefaktu
       - name: Nahrání artefaktu (Windows amd64 .exe)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4 # Používá standardní GitHub Action pro nahrání artefaktů
         with:
-          name: mailsend-go-windows-amd64-executable
+          name: mailsend-go-windows-amd64-executable # Název artefaktu, jak se zobrazí v GitHubu
+          # Použije název z kroku build, pokud je dostupný, jinak fallback
           path: ${{ steps.build.outputs.executable_name || 'mailsend-go-windows-amd64.exe' }}
 
   create-release:
     name: Vytvořit GitHub Release
-    needs: build-windows
-    if: github.event.inputs.create_release == 'true' # Podmínka zůstává stejná
+    needs: build-windows # Tento job poběží až po úspěšném dokončení jobu 'build-windows'
+    # Spustí se pouze pokud uživatel zadal create_release=true
+    if: github.event.inputs.create_release == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # Potřebné oprávnění k vytváření tagů a releases
 
     steps:
+      # Krok 1: Stažení kódu (Checkout) - znovu, pokud je potřeba pro kontext releasu
       - name: Stažení kódu (Checkout)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Potřebné pro získání informací o commitech
 
+      # Krok 2: Generování komponent pro název releasu
       - name: Generování komponent pro název releasu
         id: generate_release_info
         run: |
           # Získá datum a čas posledního commitu v UTC a krátký hash
-          # Formát: YYYYMMDD-HHMMSS
-          COMMIT_DATETIME=$(git log -1 --format=%cd --date=format-local:'%Y%m%d-%H%M%S' --utc)
+          COMMIT_TIMESTAMP=$(git log -1 --format=%ct) # Získá UNIX timestamp (sekundy od epochy) data commitu
+          COMMIT_DATETIME=$(date -u -d @${COMMIT_TIMESTAMP} +'%Y%m%d-%H%M%S') # Převede timestamp na formát RRRRMMDD-HHMMSS v UTC
           SHORT_SHA=$(git log -1 --format=%h)
+          COMMIT_MESSAGE_RAW=$(git log -1 --pretty=%s)
+          # Odstranění potenciálně problematických znaků pro názvy souborů/tagů z commit message (volitelné, ale bezpečnější)
+          COMMIT_MESSAGE_CLEANED=$(echo "$COMMIT_MESSAGE_RAW" | tr -cd '[:alnum:]._-')
           
           # Pokud uživatel zadal vlastní tag, použijeme ho, jinak sestavíme automatický
           INPUT_TAG="${{ github.event.inputs.release_tag }}"
@@ -83,27 +98,33 @@ jobs:
           echo "final_release_name=${FINAL_RELEASE_NAME}" >> $GITHUB_OUTPUT
           echo "commit_datetime_utc=${COMMIT_DATETIME}" >> $GITHUB_OUTPUT
           echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "commit_message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
+          echo "commit_message_raw=${COMMIT_MESSAGE_RAW}" >> $GITHUB_OUTPUT # Uložíme i původní zprávu commitu
 
+      # Krok 3: Stažení skompilovaného artefaktu
       - name: Stažení skompilovaného artefaktu
         uses: actions/download-artifact@v4
         with:
           name: mailsend-go-windows-amd64-executable
-          path: ./executable_dir
+          path: ./executable_dir # Artefakt se stáhne do tohoto podadresáře
 
+      # Krok 4: Vytvoření Release a nahrání souboru
       - name: Vytvoření Release a nahrání souboru
         uses: softprops/action-gh-release@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # Automaticky poskytovaný token
         with:
           tag_name: ${{ steps.generate_release_info.outputs.final_tag_name }}
           name: ${{ steps.generate_release_info.outputs.final_release_name }}
           body: |
             Toto je automaticky vygenerovaný release.
-            Poslední commit: ${{ steps.generate_release_info.outputs.short_sha }} (${{ steps.generate_release_info.outputs.commit_message }})
+            Poslední commit: ${{ steps.generate_release_info.outputs.short_sha }}
+            Zpráva commitu: ${{ steps.generate_release_info.outputs.commit_message_raw }}
             Datum commitu (UTC): ${{ steps.generate_release_info.outputs.commit_datetime_utc }}
             
             Skompilováno pro Windows (amd64).
+            Soubor: ${{ needs.build-windows.outputs.executable_name }}
           draft: false
           prerelease: false
+          # Cesta k souboru, který se má k releasu přiložit.
+          # Používáme výstup z 'build-windows' jobu (outputs.executable_name) pro správný název souboru.
           files: ./executable_dir/${{ needs.build-windows.outputs.executable_name }}
