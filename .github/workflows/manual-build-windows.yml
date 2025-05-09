@@ -1,0 +1,38 @@
+name: Ruční sestavení mailsend-go pro Windows
+
+# Toto umožňuje ruční spuštění workflow z GitHub Actions UI
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Sestavit pro Windows
+    runs-on: ubuntu-latest # Použijeme linuxový runner pro cross-kompilaci, je to běžné a rychlé
+
+    steps:
+      # Krok 1: Stáhnout kód tvého repozitáře
+      - name: Stažení kódu (Checkout)
+        uses: actions/checkout@v4 # Používá standardní GitHub Action pro stažení kódu
+
+      # Krok 2: Nastavit prostředí Go
+      - name: Nastavení Go
+        uses: actions/setup-go@v5 # Používá standardní GitHub Action pro nastavení Go
+        with:
+          go-version: '1.22' # Specifikuj verzi Go. mailsend-go vyžaduje 1.18+, doporučuje se novější.
+
+      # Krok 3: Kompilace aplikace pro Windows
+      - name: Kompilace pro Windows (amd64)
+        run: |
+          echo "Kompiluji pro Windows amd64..."
+          # Nastavení proměnných prostředí pro cross-kompilaci
+          # GOOS=windows cílí na operační systém Windows
+          # GOARCH=amd64 cílí na 64-bitovou architekturu
+          GOOS=windows GOARCH=amd64 go build -v -o mailsend-go-windows-amd64.exe .
+          echo "Kompilace dokončena. Výstupní soubor: mailsend-go-windows-amd64.exe"
+
+      # Krok 4: Nahrání skompilovaného souboru jako artefaktu
+      - name: Nahrání artefaktu (Windows amd64 .exe)
+        uses: actions/upload-artifact@v4 # Používá standardní GitHub Action pro nahrání artefaktů
+        with:
+          name: mailsend-go-windows-amd64-executable # Název artefaktu, jak se zobrazí v GitHubu
+          path: mailsend-go-windows-amd64.exe # Cesta k souboru, který se má nahrát
